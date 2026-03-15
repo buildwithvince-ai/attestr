@@ -1,5 +1,14 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef, useCallback } from "react";
+
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
+type SpeechRecognition = InstanceType<typeof window.SpeechRecognition>;
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
