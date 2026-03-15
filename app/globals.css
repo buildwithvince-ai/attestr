@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #060a14;
+  color: #f1f5f9;
+  font-family: 'Sora', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
