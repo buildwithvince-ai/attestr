@@ -28,8 +28,9 @@ Attestr is an AI clinical documentation agent for solo physicians. A doctor spea
 |-------|-----------|-------|
 | Framework | Next.js 14 | App Router only — no Pages Router |
 | Language | TypeScript | Strict mode |
-| Styling | Tailwind CSS + inline styles | Liquid glass uses inline styles — see design system below |
+| Styling | Tailwind CSS + globals.css | Liquid glass classes in `globals.css` + inline styles — see design system below |
 | AI | Google Gemini 1.5 Flash | Via `@google/generative-ai` SDK |
+| Database | Supabase | Via `@supabase/supabase-js` — stores attested encounters in `attestr_encounters` table |
 | Voice | Web Speech API | Chrome/Edge only — graceful fallback for other browsers |
 | A2A Agent | Next.js API routes | No separate server needed |
 | Deployment | Vercel | Auto-deploy from GitHub |
@@ -42,9 +43,9 @@ Attestr is an AI clinical documentation agent for solo physicians. A doctor spea
 ```
 attestr/
 ├── app/
-│   ├── page.tsx                              ← Entire frontend (input + review screens)
-│   ├── layout.tsx                            ← Root layout
-│   ├── globals.css                           ← Minimal global styles
+│   ├── page.tsx                              ← Entire frontend (input, review, history, note-view screens)
+│   ├── layout.tsx                            ← Root layout (imports globals.css, loads Google Fonts)
+│   ├── globals.css                           ← All liquid glass classes, button styles, keyframes, scrollbar
 │   ├── api/
 │   │   ├── generate-soap/
 │   │   │   └── route.ts                      ← Gemini SOAP generation endpoint
@@ -53,7 +54,9 @@ attestr/
 │   └── .well-known/
 │       └── agent-card.json/
 │           └── route.ts                      ← A2A agent discovery endpoint
-├── .env.local                                ← GEMINI_API_KEY (never commit)
+├── public/
+│   └── attestr-logo.png                      ← Logo image (white-inverted in header via CSS filter)
+├── .env.local                                ← GEMINI_API_KEY + Supabase keys (never commit)
 ├── CLAUDE.md                                 ← This file
 ├── package.json
 ├── next.config.ts
@@ -68,6 +71,8 @@ attestr/
 
 ```
 GEMINI_API_KEY=your_key_here
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 Set in `.env.local` locally and in Vercel → Project → Settings → Environment Variables for production.
@@ -163,11 +168,16 @@ This same pen animation should be used for any loading/thinking/generating state
 - Date of Service (date, defaults to today)
 - Encounter Narrative (textarea, 9 rows)
 
-**Voice input:**
-- Web Speech API, continuous + interim results
-- Mic button toggles recording — shows animated waveform (28 bars) while active
-- Interim text appends to textarea in real time
+**Voice input (AIVoiceInput-style, liquid glass adapted):**
+- Web Speech API, continuous + interim results via `toggleRecording` (useCallback)
+- Centered vertical layout: mic button → timer → 48 visualizer bars → status text
+- Mic button: 56px rounded, SVG mic icon idle, spinning gradient square when recording
+- Timer: `00:00` format (JetBrains Mono), counts up while recording, resets on stop
+- 48 visualizer bars with staggered `waveBar` CSS keyframe animation when active, flat 5px when idle
+- Status text: "Listening..." when recording, "Click to speak" when idle
+- Interim text shown in textarea placeholder (not appended to value)
 - Final text appends permanently on each result
+- Voice divider separates textarea from voice bar ("or use voice input below if more convenient")
 
 **Try Demo button** (header):
 - Pre-fills all fields with Marco Reyes synthetic encounter
@@ -208,10 +218,27 @@ Four SOAP sections rendered in order: Subjective → Objective → Assessment �
 **Copy to EHR button:**
 - Locked (disabled, btn-primary style) until all 4 sections approved
 - Unlocked (btn-success style, green) when all approved
-- On click: copies formatted plain-text note to clipboard
+- On click: copies formatted plain-text note to clipboard AND saves encounter to Supabase `attestr_encounters` table
 - Shows "✓ Copied" confirmation for 2.5s
 
 **FHIR toggle:** Collapsible section showing raw FHIR R4 DocumentReference JSON
+
+---
+
+### Screen 3: History Screen (`screen === "history"`)
+
+- Accessed via History button in header
+- Fetches all encounters from Supabase `attestr_encounters` table
+- Groups patients by name, shows last seen date and encounter count
+- Click a patient → expands to show timeline of all encounters with mini confidence bars
+- Click an encounter → navigates to note-view screen
+
+### Screen 4: Note View Screen (`screen === "note-view"`)
+
+- Read-only view of a previously attested SOAP note
+- Shows all 4 SOAP sections with confidence indicators
+- Copy button to re-copy the note to clipboard
+- Back button returns to history
 
 ---
 
@@ -314,10 +341,13 @@ Handles A2A task messages from Prompt Opinion.
 - Never use Inter, Roboto, Arial, or system-ui as primary fonts
 - Never use shadcn/ui components — they break the glass aesthetic
 
+**CSS discipline:**
+- All CSS classes (lg-*, btn-*, keyframes) live in `globals.css` — never in inline `<style>` tags or JS `const css` strings
+- Inline `<style>{css}</style>` causes React hydration errors — this was fixed by moving to globals.css
+
 **File discipline:**
 - Do not create new files without being asked
 - Do not split `page.tsx` into multiple components unless asked
-- Do not add a database — this is stateless by design
 
 ---
 
@@ -325,17 +355,26 @@ Handles A2A task messages from Prompt Opinion.
 
 ### ✅ Complete
 - Full UI — input screen, review screen, liquid glass design
+- History screen — patient list grouped by name, last seen date, encounter count
+- Patient timeline — click patient to see all encounters with mini confidence bars
+- Note view screen — read-only approved SOAP note with copy button
+- Clinical disclaimer banner on input screen
+- Voice divider between textarea and mic bar
+- AIVoiceInput-style voice bar (centered, timer, 48 bars, status text) in liquid glass
+- Logo replaced with actual `Attestr logo.png` in header
 - Pen writing animation for loading state
 - Gemini API route (`/api/generate-soap/route.ts`)
 - A2A agent card (`/.well-known/agent-card.json/route.ts`)
 - A2A message handler (`/api/a2a/route.ts`)
+- Supabase integration — `@supabase/supabase-js` installed, saves on "Copy to EHR" click
+- CSS moved from inline `<style>` to `globals.css` (fixed hydration error)
 - Devpost submission story (`attestr-devpost-story.md`)
 - Prompt Opinion account created
 
 ### 🔴 Remaining
-- [ ] All 4 files placed in correct paths in project
-- [ ] `pnpm add @google/generative-ai`
 - [ ] `GEMINI_API_KEY` added to Vercel environment variables
+- [ ] Supabase env vars added to Vercel environment variables
+- [ ] `attestr_encounters` table created in Supabase (see schema in page.tsx saveToSupabase)
 - [ ] Deploy to Vercel and verify live
 - [ ] Verify agent card at `https://attestr-ai.vercel.app/.well-known/agent-card.json`
 - [ ] Connect Attestr to Prompt Opinion (External Agents → Add Connection)

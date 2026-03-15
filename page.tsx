@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -148,12 +148,13 @@ export default function Attestr() {
   const [screen, setScreen] = useState<"input" | "review" | "history" | "note-view">("input");
 
   // Input state
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
+  const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [interimText, setInterimText] = useState("");
   const [patientName, setPatientName] = useState("");
   const [chiefComplaint, setChiefComplaint] = useState("");
   const [encounterDate, setEncounterDate] = useState("");
+  const [audioLevel, setAudioLevel] = useState(0);
   const [demoLoading, setDemoLoading] = useState(false);
 
   // Generation state
@@ -176,25 +177,23 @@ export default function Attestr() {
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [viewingEncounter, setViewingEncounter] = useState<EncounterRecord | null>(null);
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     setEncounterDate(new Date().toISOString().split("T")[0]);
   }, []);
 
-  // Recording timer
   useEffect(() => {
-    if (!isRecording) { setRecordingTime(0); return; }
-    const id = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    return () => clearInterval(id);
-  }, [isRecording]);
-
-  const formatTime = (s: number) => {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
-  };
+    if (isListening) {
+      const animate = () => { setAudioLevel(Math.random() * 100); animFrameRef.current = requestAnimationFrame(animate); };
+      animFrameRef.current = requestAnimationFrame(animate);
+    } else {
+      setAudioLevel(0);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    }
+    return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
+  }, [isListening]);
 
   // Load encounters when history screen opens
   useEffect(() => {
@@ -238,53 +237,36 @@ export default function Attestr() {
     }, 16);
   };
 
-  const toggleRecording = useCallback(() => {
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      return;
-    }
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.');
-      return;
-    }
-
-    const recognition = new SR();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = '';
-      let final = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          final += t + ' ';
-        } else {
-          interim += t;
-        }
+  const startListening = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { alert("Voice input requires Chrome or Edge."); return; }
+    const r = new SR();
+    r.continuous = true; r.interimResults = true; r.lang = "en-US";
+    r.onresult = (e: any) => {
+      let fin = ""; let intr = "";
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) fin += e.results[i][0].transcript + " ";
+        else intr += e.results[i][0].transcript;
       }
-      if (final) {
-        setTranscript(prev => prev + final);
-      }
-      if (textareaRef.current && interim) {
-        textareaRef.current.placeholder = interim;
-      }
+      if (fin) setTranscript(p => p + fin);
+      setInterimText(intr);
     };
+    r.onerror = () => stopListening();
+    r.onend = () => setIsListening(false);
+    recognitionRef.current = r;
+    r.start();
+    setIsListening(true);
+  };
 
-    recognition.onerror = () => setIsRecording(false);
-    recognition.onend = () => setIsRecording(false);
-
-    recognition.start();
-    recognitionRef.current = recognition;
-    setIsRecording(true);
-  }, [isRecording]);
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setIsListening(false);
+    setInterimText("");
+  };
 
   const clearAll = () => {
-    setTranscript(""); setPatientName("");
+    setTranscript(""); setInterimText(""); setPatientName("");
     setChiefComplaint(""); setGenerateError("");
     setEncounterDate(new Date().toISOString().split("T")[0]);
   };
@@ -363,6 +345,137 @@ export default function Attestr() {
   const confLabel = (c: number) => c >= 0.8 ? "High confidence" : c >= 0.6 ? "Review recommended" : "Verify carefully";
   const canGenerate = transcript.trim().length > 20 && patientName.trim().length > 0;
 
+  const WaveBar = ({ h }: { h: number }) => (
+    <div style={{
+      width: "3px", borderRadius: "2px",
+      background: isListening ? "rgba(139,92,246,0.85)" : "rgba(255,255,255,0.06)",
+      height: isListening ? `${Math.max(5, (audioLevel * h) / 100)}px` : "5px",
+      transition: "height 0.07s ease",
+    }} />
+  );
+
+  /* ── CSS ── */
+  const css = `
+    @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+
+    .lg-base {
+      background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      backdrop-filter: blur(20px) saturate(150%) brightness(1.05);
+      -webkit-backdrop-filter: blur(20px) saturate(150%) brightness(1.05);
+      border: 1px solid rgba(255,255,255,0.07);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -1px 0 rgba(0,0,0,0.15), 0 8px 32px rgba(0,0,0,0.35);
+    }
+    .lg-panel {
+      background: linear-gradient(160deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.02) 60%, rgba(139,92,246,0.015) 100%);
+      backdrop-filter: blur(32px) saturate(180%) brightness(1.08);
+      -webkit-backdrop-filter: blur(32px) saturate(180%) brightness(1.08);
+      border: 1px solid rgba(255,255,255,0.09);
+      box-shadow: inset 0 1.5px 0 rgba(255,255,255,0.13), inset 0 -1px 0 rgba(0,0,0,0.18), 0 12px 40px rgba(0,0,0,0.4);
+    }
+    .lg-strong {
+      background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+      backdrop-filter: blur(48px) saturate(200%) brightness(1.1);
+      -webkit-backdrop-filter: blur(48px) saturate(200%) brightness(1.1);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 16px 48px rgba(0,0,0,0.5);
+    }
+    .lg-active {
+      background: linear-gradient(135deg, rgba(139,92,246,0.08), rgba(99,102,241,0.04));
+      backdrop-filter: blur(32px) saturate(180%);
+      -webkit-backdrop-filter: blur(32px) saturate(180%);
+      border: 1px solid rgba(139,92,246,0.28);
+      box-shadow: inset 0 1.5px 0 rgba(167,139,250,0.2), 0 0 32px rgba(139,92,246,0.08);
+    }
+    .lg-approved {
+      background: linear-gradient(135deg, rgba(74,222,128,0.06), rgba(16,185,129,0.03));
+      backdrop-filter: blur(32px) saturate(160%);
+      -webkit-backdrop-filter: blur(32px) saturate(160%);
+      border: 1px solid rgba(74,222,128,0.22);
+      box-shadow: inset 0 1.5px 0 rgba(74,222,128,0.15), 0 0 20px rgba(74,222,128,0.04);
+    }
+    .lg-warning {
+      background: linear-gradient(135deg, rgba(251,191,36,0.06), rgba(245,158,11,0.03));
+      backdrop-filter: blur(20px) saturate(150%);
+      -webkit-backdrop-filter: blur(20px) saturate(150%);
+      border: 1px solid rgba(251,191,36,0.2);
+      box-shadow: inset 0 1px 0 rgba(251,191,36,0.1), 0 4px 16px rgba(0,0,0,0.3);
+    }
+
+    input, textarea {
+      background: rgba(255,255,255,0.035);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px; padding: 11px 14px;
+      color: rgba(241,245,249,0.9);
+      font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      width: 100%; outline: none; resize: none; transition: all 0.2s ease;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), inset 0 2px 8px rgba(0,0,0,0.2);
+    }
+    input:focus, textarea:focus {
+      background: rgba(255,255,255,0.055);
+      border-color: rgba(139,92,246,0.45);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 3px rgba(139,92,246,0.1), 0 0 24px rgba(139,92,246,0.06);
+    }
+    input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.18); }
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.45) brightness(1.2); cursor:pointer; }
+
+    label { display:block; font-size:10px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:6px; font-family:'Sora',system-ui,sans-serif; }
+
+    .btn-primary { font-family:'Sora',system-ui,sans-serif; font-size:14px; font-weight:600; color:#fff; border:none; border-radius:12px; padding:15px 28px; cursor:pointer; width:100%; transition:all 0.25s ease; position:relative; overflow:hidden; background:linear-gradient(135deg,rgba(99,102,241,0.95),rgba(139,92,246,0.95)); border:1px solid rgba(167,139,250,0.35); box-shadow:inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 24px rgba(99,102,241,0.35); }
+    .btn-primary::before { content:''; position:absolute; top:0; left:0; right:0; height:50%; background:linear-gradient(180deg,rgba(255,255,255,0.12),transparent); border-radius:12px 12px 0 0; pointer-events:none; }
+    .btn-primary:hover:not(:disabled) { transform:translateY(-1px); box-shadow:inset 0 1px 0 rgba(255,255,255,0.25), 0 8px 40px rgba(99,102,241,0.5); }
+    .btn-primary:disabled { background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.06); color:rgba(255,255,255,0.2); cursor:not-allowed; box-shadow:inset 0 1px 0 rgba(255,255,255,0.04); }
+    .btn-primary:disabled::before { display:none; }
+
+    .btn-success { font-family:'Sora',system-ui,sans-serif; font-size:14px; font-weight:600; color:#fff; border-radius:12px; padding:15px 28px; cursor:pointer; width:100%; transition:all 0.25s ease; position:relative; overflow:hidden; background:linear-gradient(135deg,rgba(5,150,105,0.95),rgba(16,185,129,0.95)); border:1px solid rgba(52,211,153,0.35); box-shadow:inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 24px rgba(16,185,129,0.3); }
+    .btn-success::before { content:''; position:absolute; top:0; left:0; right:0; height:50%; background:linear-gradient(180deg,rgba(255,255,255,0.12),transparent); border-radius:12px 12px 0 0; pointer-events:none; }
+    .btn-success:hover:not(:disabled) { transform:translateY(-1px); box-shadow:inset 0 1px 0 rgba(255,255,255,0.22), 0 8px 40px rgba(16,185,129,0.45); }
+    .btn-success:disabled { background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.06); color:rgba(255,255,255,0.2); cursor:not-allowed; }
+
+    .btn-ghost { font-family:'Sora',system-ui,sans-serif; font-size:12px; font-weight:500; color:rgba(255,255,255,0.45); background:rgba(255,255,255,0.04); backdrop-filter:blur(16px); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:7px 14px; cursor:pointer; transition:all 0.2s ease; display:flex; align-items:center; gap:6px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.07); }
+    .btn-ghost:hover { background:rgba(139,92,246,0.1); border-color:rgba(139,92,246,0.28); color:rgba(167,139,250,0.95); }
+
+    .btn-approve { font-family:'Sora',system-ui,sans-serif; font-size:12px; font-weight:500; color:#4ade80; background:rgba(74,222,128,0.08); backdrop-filter:blur(8px); border:1px solid rgba(74,222,128,0.22); border-radius:8px; padding:6px 14px; cursor:pointer; transition:all 0.2s ease; box-shadow:inset 0 1px 0 rgba(74,222,128,0.1); }
+    .btn-approve:hover { background:rgba(74,222,128,0.15); }
+
+    .btn-edit-inline { font-family:'Sora',system-ui,sans-serif; font-size:12px; font-weight:500; color:rgba(255,255,255,0.35); background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:6px 14px; cursor:pointer; transition:all 0.2s ease; }
+    .btn-edit-inline:hover { border-color:rgba(139,92,246,0.28); color:rgba(167,139,250,0.9); background:rgba(139,92,246,0.07); }
+
+    .btn-clear { font-family:'Sora',system-ui,sans-serif; font-size:11px; color:rgba(255,255,255,0.25); background:transparent; border:1px solid rgba(255,255,255,0.07); border-radius:5px; padding:3px 9px; cursor:pointer; transition:all 0.15s; }
+    .btn-clear:hover { border-color:rgba(248,113,113,0.35); color:#f87171; }
+
+    .btn-history { font-family:'Sora',system-ui,sans-serif; font-size:12px; font-weight:500; color:rgba(255,255,255,0.45); background:rgba(255,255,255,0.04); backdrop-filter:blur(16px); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:7px 14px; cursor:pointer; transition:all 0.2s ease; display:flex; align-items:center; gap:6px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.07); }
+    .btn-history:hover { background:rgba(139,92,246,0.1); border-color:rgba(139,92,246,0.28); color:rgba(167,139,250,0.95); }
+
+    .mic-btn { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; transition:all 0.2s ease; background:rgba(255,255,255,0.05); border:1.5px solid rgba(255,255,255,0.1); box-shadow:inset 0 1px 0 rgba(255,255,255,0.1); }
+    .mic-btn:hover { transform:scale(1.06); background:rgba(255,255,255,0.08); }
+    .mic-btn.recording { background:rgba(139,92,246,0.14); border-color:rgba(139,92,246,0.45); animation:recPulse 1.4s ease-out infinite; }
+
+    .encounter-row { transition:all 0.2s ease; cursor:pointer; }
+    .encounter-row:hover { background:rgba(139,92,246,0.06) !important; border-color:rgba(139,92,246,0.2) !important; }
+
+    .patient-row { transition:all 0.2s ease; cursor:pointer; }
+    .patient-row:hover { background:rgba(255,255,255,0.03) !important; }
+
+    @keyframes recPulse {
+      0%   { box-shadow: inset 0 1px 0 rgba(167,139,250,0.2), 0 0 0 0 rgba(139,92,246,0.5); }
+      70%  { box-shadow: inset 0 1px 0 rgba(167,139,250,0.2), 0 0 0 10px rgba(139,92,246,0); }
+      100% { box-shadow: inset 0 1px 0 rgba(167,139,250,0.2), 0 0 0 0 rgba(139,92,246,0); }
+    }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+    .fade-up { animation:fadeUp 0.45s cubic-bezier(0.2,0,0.3,1) forwards; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.12} }
+    .blink { animation:blink 1.1s ease-in-out infinite; }
+    @keyframes shimmer { 0%{transform:translateX(-100%)} 100%{transform:translateX(200%)} }
+    @keyframes floatOrb1 { 0%,100%{transform:translateY(0px) scale(1)} 50%{transform:translateY(-30px) scale(1.05)} }
+    @keyframes floatOrb2 { 0%,100%{transform:translateY(0px) scale(1)} 50%{transform:translateY(20px) scale(0.97)} }
+    @keyframes floatOrb3 { 0%,100%{transform:translate(0,0) scale(1)} 33%{transform:translate(20px,-15px) scale(1.04)} 66%{transform:translate(-15px,10px) scale(0.98)} }
+    @keyframes glowRing { 0%,100%{transform:scale(1);opacity:0.6} 50%{transform:scale(1.15);opacity:1} }
+    ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.07);border-radius:2px}
+  `;
+
   /* ── Background ── */
   const BgScene = () => (
     <>
@@ -379,8 +492,10 @@ export default function Attestr() {
       <div style={{ display:"flex", alignItems:"center", gap:"11px" }}>
         <div style={{ position:"relative", width:"36px", height:"36px" }}>
           <div style={{ position:"absolute", inset:0, borderRadius:"10px", background:"linear-gradient(135deg,#6366f1,#8b5cf6)", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.25), 0 0 28px rgba(99,102,241,0.45)" }}/>
-          <div style={{ position:"absolute", inset:0, borderRadius:"10px", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}>
-            <img src="/attestr-logo.png" alt="Attestr" width={22} height={22} style={{ filter:"brightness(0) invert(1)", objectFit:"contain" }}/>
+          <div style={{ position:"absolute", inset:0, borderRadius:"10px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M9 12h6M9 16h6M9 8h4M5 20h14a2 2 0 002-2V8l-5-5H5a2 2 0 00-2 2v13a2 2 0 002 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
           </div>
         </div>
         <div>
@@ -431,6 +546,7 @@ export default function Attestr() {
   ═══════════════════════════════════════ */
   if (generating) return (
     <div style={{ minHeight:"100vh", fontFamily:"'Sora',system-ui,sans-serif", color:"#e2e8f0", display:"flex", alignItems:"center", justifyContent:"center", position:"relative", overflow:"hidden" }}>
+      <style>{css}</style>
       <BgScene />
       <div className="lg-panel fade-up" style={{ borderRadius:"28px", padding:"52px 60px", textAlign:"center", maxWidth:"380px", width:"calc(100% - 48px)", position:"relative", zIndex:1 }}>
         <div style={{ position:"absolute", top:0, left:"15%", right:"15%", height:"1px", background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent)" }}/>
@@ -460,6 +576,7 @@ export default function Attestr() {
   ═══════════════════════════════════════ */
   if (screen === "history") return (
     <div style={{ minHeight:"100vh", fontFamily:"'Sora',system-ui,sans-serif", color:"#e2e8f0", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden" }}>
+      <style>{css}</style>
       <BgScene />
       <Header extra={
         <button className="btn-ghost" onClick={() => { setSelectedPatient(null); setScreen("input"); }}>
@@ -591,6 +708,7 @@ export default function Attestr() {
     const enc = viewingEncounter;
     return (
       <div style={{ minHeight:"100vh", fontFamily:"'Sora',system-ui,sans-serif", color:"#e2e8f0", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden" }}>
+        <style>{css}</style>
         <BgScene />
         <Header extra={
           <button className="btn-ghost" onClick={() => setScreen("history")}>
@@ -644,6 +762,7 @@ export default function Attestr() {
   ═══════════════════════════════════════ */
   if (screen === "input") return (
     <div style={{ minHeight:"100vh", fontFamily:"'Sora',system-ui,sans-serif", color:"#e2e8f0", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden" }}>
+      <style>{css}</style>
       <BgScene />
       <Header extra={
         <>
@@ -683,9 +802,9 @@ export default function Attestr() {
           </div>
         </div>
 
-        {/* Narrative + voice */}
-        <div className={isRecording ? "lg-active" : "lg-panel"} style={{ borderRadius:"18px", padding:"22px 24px", marginBottom:"16px", position:"relative", transition:"all 0.3s ease" }}>
-          <div style={{ position:"absolute", top:0, left:"10%", right:"10%", height:"1px", background:`linear-gradient(90deg,transparent,${isRecording ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.12)"},transparent)` }}/>
+        {/* Narrative + voice divider */}
+        <div className={isListening ? "lg-active" : "lg-panel"} style={{ borderRadius:"18px", padding:"22px 24px", marginBottom:"16px", position:"relative", transition:"all 0.3s ease" }}>
+          <div style={{ position:"absolute", top:0, left:"10%", right:"10%", height:"1px", background:`linear-gradient(90deg,transparent,${isListening ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.12)"},transparent)` }}/>
 
           {/* Toolbar */}
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"14px" }}>
@@ -698,61 +817,37 @@ export default function Attestr() {
 
           {/* Text area */}
           <textarea
-            ref={textareaRef}
-            rows={9}
-            value={transcript}
+            rows={7}
+            placeholder={`Type your encounter notes here.\n\nExample: "35-year-old male presents with 3-day history of sharp chest pain radiating to left arm. Vitals: BP 138/84, HR 91..."`}
+            value={transcript + (interimText ? ` ${interimText}` : "")}
             onChange={e => setTranscript(e.target.value)}
-            placeholder="Dictate or type the patient encounter…"
-            style={{ lineHeight:1.8, ...(isRecording ? {} : {}) }}
+            style={{ lineHeight:1.8 }}
           />
 
           {/* Voice divider */}
           <VoiceDivider />
 
-          {/* Voice input — adapted from AIVoiceInput into liquid glass */}
-          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:"8px", padding:"12px 0 4px" }}>
-            <button
-              onClick={toggleRecording}
-              style={{
-                width:56, height:56, borderRadius:14, cursor:"pointer",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                transition:"all 0.25s ease",
-                ...(isRecording
-                  ? { background:"linear-gradient(135deg, rgba(139,92,246,0.12), rgba(99,102,241,0.06))", backdropFilter:"blur(32px) saturate(180%)", border:"1px solid rgba(139,92,246,0.35)", boxShadow:"inset 0 1.5px 0 rgba(167,139,250,0.25), 0 0 36px rgba(139,92,246,0.12)" }
-                  : { background:"linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))", backdropFilter:"blur(20px) saturate(150%) brightness(1.05)", border:"1px solid rgba(255,255,255,0.08)", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.15), 0 8px 32px rgba(0,0,0,0.35)" }),
-              }}
-            >
-              {isRecording
-                ? <div style={{ width:18, height:18, borderRadius:4, background:"linear-gradient(135deg, #8b5cf6, #6366f1)", animation:"spin 3s linear infinite" }}/>
-                : <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"/>
-                    <path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-                  </svg>}
+          {/* Voice bar */}
+          <div className="lg-base" style={{ display:"flex", alignItems:"center", gap:"12px", padding:"10px 14px", borderRadius:"12px" }}>
+            <button className={`mic-btn${isListening ? " recording" : ""}`} onClick={isListening ? stopListening : startListening}>
+              {isListening
+                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="rgba(139,92,246,0.9)"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                : <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" strokeLinecap="round"/></svg>}
             </button>
-
-            <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:"13px", letterSpacing:"0.05em", color: isRecording ? "rgba(139,92,246,0.9)" : "rgba(255,255,255,0.2)", transition:"color 0.3s ease" }}>
-              {formatTime(recordingTime)}
-            </span>
-
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"1.5px", height:"20px", width:"280px" }}>
-              {Array.from({ length: 48 }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 2, borderRadius: 1,
-                    transition: "all 0.3s ease",
-                    ...(isRecording
-                      ? { background:"rgba(139,92,246,0.55)", height:`${20 + Math.random() * 80}%`, animation:`waveBar 0.6s ease-in-out ${i * 0.05}s infinite` }
-                      : { background:"rgba(255,255,255,0.08)", height:"5px" }),
-                  }}
-                />
+            <div style={{ display:"flex", alignItems:"center", gap:"3px", flex:1, height:"28px" }}>
+              {[.4,.7,.5,.9,.55,.8,.45,.7,.38,.65,.95,.5,.72,.85,.4,.62,.5,.88,.7,.5,.65,.8,.45,.72,.38,.9,.55,.7].map((h, i) => (
+                <WaveBar key={i} h={h * 100}/>
               ))}
             </div>
-
-            <span style={{ fontSize:"11.5px", fontFamily:"'Sora',system-ui,sans-serif", color: isRecording ? "rgba(139,92,246,0.7)" : "rgba(255,255,255,0.2)", transition:"color 0.3s ease", height:"16px" }}>
-              {isRecording ? "Listening..." : "Click to speak"}
-            </span>
+            {isListening
+              ? <div style={{ display:"flex", alignItems:"center", gap:"6px", flexShrink:0 }}>
+                  <div className="blink" style={{ width:"6px", height:"6px", borderRadius:"50%", background:"rgba(139,92,246,0.95)", boxShadow:"0 0 8px rgba(139,92,246,0.6)" }}/>
+                  <span style={{ fontSize:"10.5px", color:"rgba(139,92,246,0.9)", fontFamily:"'JetBrains Mono',monospace" }}>REC</span>
+                </div>
+              : <span style={{ fontSize:"11.5px", color:"rgba(255,255,255,0.18)", flexShrink:0 }}>Tap mic to speak</span>}
           </div>
+
+          {interimText && <div style={{ fontSize:"11.5px", color:"rgba(139,92,246,0.65)", marginTop:"10px", fontStyle:"italic" }}>Transcribing…</div>}
         </div>
 
         {/* Error */}
@@ -796,6 +891,7 @@ export default function Attestr() {
   ═══════════════════════════════════════ */
   return (
     <div style={{ minHeight:"100vh", fontFamily:"'Sora',system-ui,sans-serif", color:"#e2e8f0", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden" }}>
+      <style>{css}</style>
       <BgScene />
       <Header extra={<button className="btn-ghost" onClick={() => setScreen("input")}>← New Encounter</button>}/>
 

@@ -12,7 +12,7 @@ interface A2ATask {
 }
 
 async function generateSOAP(narrative: string) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' })
 
   const prompt = `You are a clinical documentation AI. Given the following patient encounter narrative, produce a structured SOAP note with confidence scores.
 
