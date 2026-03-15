@@ -308,8 +308,8 @@ export default function Attestr() {
         plan: data.plan.content,
       });
       setScreen("review");
-    } catch (err: any) {
-      setGenerateError(err.message || "Something went wrong.");
+    } catch (err: unknown) {
+      setGenerateError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setGenerating(false);
     }
@@ -342,8 +342,8 @@ export default function Attestr() {
         status: "approved",
       });
       if (error) throw new Error(error.message);
-    } catch (err: any) {
-      setSaveError(err.message);
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
       setSaving(false);
     }
