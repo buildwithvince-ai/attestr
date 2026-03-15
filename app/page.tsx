@@ -9,6 +9,7 @@ declare global {
   }
 }
 type SpeechRecognition = InstanceType<typeof window.SpeechRecognition>;
+type SpeechRecognitionEvent = any;
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
