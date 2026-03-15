@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' })
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
 
     const prompt = `You are a clinical documentation AI. Given the following patient encounter narrative, produce a structured SOAP note with confidence scores.
 
